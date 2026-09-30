@@ -149,6 +149,53 @@ def _shell(cmd, timeout=25):
         return f"Unavailable: {e}"
 
 
+# ── desktop shortcut launcher ────────────────────────────────────────────
+# "open office browser" must open the user's .lnk deterministically. Left to
+# the model it guesses, and with computer_use enabled a wrong guess means real
+# clicks in a real window. These are resolved locally and never sent to Hermes.
+SHORTCUT_DIR = pathlib.Path(os.path.expanduser(
+    os.environ.get("JARVIS_SHORTCUT_DIR", "~/Desktop")))
+
+SHORTCUTS = {
+    "office browser": "Office Browser",
+    "work browser": "Office Browser",
+    "google docs": "Google Docs",
+    "google drive": "Google Drive",
+    "google sheets": "Google Sheets",
+    "google slides": "Google Slides",
+    "obsidian": "Obsidian",
+}
+
+_OPEN = re.compile(
+    r"^\s*(?:please\s+)?(?:open|start|launch|run|fire\s+up)\s+"
+    r"(?:the\s+|my\s+)?(?P<name>.{1,40}?)\s*(?:app|application|shortcut)?\s*[.!?]*\s*$",
+    re.I,
+)
+
+
+def _match_shortcut(text):
+    """Return (display_name, path) for a spoken "open <name>", or None."""
+    m = _OPEN.match(text or "")
+    if not m:
+        return None
+    spoken = m.group("name").strip().lower()
+    for trigger, filename in SHORTCUTS.items():
+        if spoken == trigger or trigger in spoken:
+            for ext in (".lnk", ".url", ".exe"):
+                candidate = SHORTCUT_DIR / (filename + ext)
+                if candidate.exists():
+                    return filename, candidate
+    return None
+
+
+def _open_shortcut(name, path):
+    try:
+        os.startfile(str(path))
+        return f"Opening {name}, sir."
+    except Exception as e:  # noqa: BLE001
+        return f"Could not open {name}: {e}"
+
+
 def _commands_reply():
     return """Available dashboard slash commands:
 /new — reset the Hermes thread
@@ -171,6 +218,13 @@ You can also type normal Hermes prompts. Unknown slash commands are forwarded to
 
 
 def handle(message, runner=None):
+    # Local desktop shortcuts resolve before anything else: these must open the
+    # user's actual .lnk, not a model guess.
+    hit = _match_shortcut(message)
+    if hit:
+        name, path = hit
+        return dict(message=None, reply=_open_shortcut(name, path), note=f"shortcut: {name}")
+
     m = _CMD.match(message or "")
     if not m:
         return None
