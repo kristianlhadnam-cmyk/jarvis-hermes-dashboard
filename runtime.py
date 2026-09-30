@@ -85,6 +85,7 @@ def _can_launch_hermes():
     try:
         base = _hermes_base()
         proc = subprocess.run(base + ["--version"], cwd=WORKDIR, text=True,
+                              encoding="utf-8", errors="replace",
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                               timeout=12)
         return proc.returncode == 0, (proc.stdout or proc.stderr).strip()
@@ -92,13 +93,28 @@ def _can_launch_hermes():
         return False, str(e)
 
 
+_KIND_CACHE = None
+
+
 def runtime_kind():
+    """Return 'hermes' or 'mock', probing the CLI at most once per process.
+
+    Every call previously spawned `hermes --version` (~6s of Python startup) and
+    run() calls this on each request. The answer cannot change while the server
+    is up, so cache it.
+    """
+    global _KIND_CACHE
+    if _KIND_CACHE is not None:
+        return _KIND_CACHE
     if RUNTIME == "mock":
-        return "mock"
+        _KIND_CACHE = "mock"
+        return _KIND_CACHE
     if RUNTIME == "hermes":
-        return "hermes"
+        _KIND_CACHE = "hermes"
+        return _KIND_CACHE
     ok, _ = _can_launch_hermes()
-    return "hermes" if ok else "mock"
+    _KIND_CACHE = "hermes" if ok else "mock"
+    return _KIND_CACHE
 
 
 def build_command(message, session_id=None, system=None):
@@ -125,11 +141,23 @@ def build_command(message, session_id=None, system=None):
     return cmd
 
 
+_TOOLS_CACHE = None
+
+
 def hermes_tools_snapshot(limit=36):
-    """Return a compact list of enabled/visible Hermes toolsets/tools for UI status."""
+    """Return a compact list of enabled/visible Hermes toolsets/tools for UI status.
+
+    Runs `hermes tools list` at most once per process: the call costs ~10s of
+    Python startup on every invocation, and the result cannot change while the
+    server is up.
+    """
+    global _TOOLS_CACHE
+    if _TOOLS_CACHE is not None:
+        return _TOOLS_CACHE
     try:
         base = _hermes_base()
         proc = subprocess.run(base + ["tools", "list"], cwd=WORKDIR, text=True,
+                              encoding="utf-8", errors="replace",
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                               timeout=20)
         out = (proc.stdout or proc.stderr or "").strip()
@@ -142,9 +170,10 @@ def hermes_tools_snapshot(limit=36):
                 tools.append(clean[:80])
             if len(tools) >= limit:
                 break
-        return tools or [out[:120]] if out else []
+        _TOOLS_CACHE = (tools or [out[:120]]) if out else []
     except Exception:
-        return []
+        _TOOLS_CACHE = []
+    return _TOOLS_CACHE
 
 
 def run_hermes(message, session_id=None, system=None):
@@ -173,6 +202,7 @@ def _run_hermes_locked(message, session_id=None, system=None):
 
     try:
         proc = subprocess.Popen(cmd, cwd=WORKDIR, text=True, bufsize=1,
+                                encoding="utf-8", errors="replace",
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 env=child_env)
         with _ACTIVE_LOCK:
