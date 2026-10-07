@@ -172,10 +172,25 @@ _OPEN = re.compile(
     re.I,
 )
 
+# Voice transcripts usually carry a wake word ("jarvis open office browser") or
+# a politeness phrase ("could you open the office browser"). Neither is in the
+# user's intent; strip them before matching or voice commands fall through to
+# the model and cost a full Hermes turn (~30-90s).
+_WAKE = re.compile(
+    r"^\s*(?:(?:hey|ok|okay|yo|hi|hello)\s+)?(?:jarvis|computer|assistant)\s*[,\-:!.]*\s*",
+    re.I,
+)
+_POLITE = re.compile(
+    r"^\s*(?:please|kindly|(?:could|can|would|will)\s+you)\s*(?:please)?\s*[,\-:!.]*\s*",
+    re.I,
+)
+
 
 def _match_shortcut(text):
     """Return (display_name, path) for a spoken "open <name>", or None."""
-    m = _OPEN.match(text or "")
+    cleaned = _WAKE.sub("", text or "")
+    cleaned = _POLITE.sub("", cleaned)
+    m = _OPEN.match(cleaned)
     if not m:
         return None
     spoken = m.group("name").strip().lower()
