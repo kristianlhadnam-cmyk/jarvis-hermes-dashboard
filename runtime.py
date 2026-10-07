@@ -220,7 +220,10 @@ def _run_hermes_locked(message, session_id=None, system=None):
         if hasattr(os, "O_NOFOLLOW"):
             flags |= os.O_NOFOLLOW
         fd = os.open(os.path.expanduser(RAW_LOG), flags, 0o600)
-        os.fchmod(fd, 0o600)
+        # os.fchmod is Unix-only; os.open's mode argument already applies what
+        # Windows honours. Guarding here or every raw-logged run dies on Windows.
+        if hasattr(os, "fchmod"):
+            os.fchmod(fd, 0o600)
         raw = os.fdopen(fd, "w", encoding="utf-8", errors="replace")
         raw.write("$ " + " ".join(shlex.quote(x) for x in cmd) + "\n\n")
         raw.flush()
