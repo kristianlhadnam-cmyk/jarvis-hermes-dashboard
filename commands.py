@@ -81,6 +81,30 @@ JOBS = {}
 _JOB_LOCK = threading.Lock()
 
 
+def _notify(status, jid, mission, text):
+    """Best-effort out-of-band alert when a background mission finishes.
+
+    Uses `hermes send` (no LLM, no agent loop). Target/profile come from env:
+    JARVIS_NOTIFY (e.g. 'telegram', 'whatsapp', or empty to disable) and
+    JARVIS_NOTIFY_PROFILE (where the platform credentials live; the gateway
+    runs on 'default', while this dashboard runs on HERMES_PROFILE).
+    Notification failure must never break mission tracking — swallow everything.
+    """
+    target = os.environ.get("JARVIS_NOTIFY", "").strip()
+    if not target:
+        return
+    profile = (os.environ.get("JARVIS_NOTIFY_PROFILE", "default").strip() or "default")
+    headline = "FAILED" if status == "failed" else "finished"
+    body = (f"JARVIS mission {headline} [{jid}] — {mission[:160]}"
+            f"{': ' + text[:400] if text else ''}")
+    cmd = _hermes_command("-p", profile, "send", "-q", "--to", target, body[:900])
+    try:
+        subprocess.run(cmd, cwd=ROOT, stdout=subprocess.PIPE,
+                       stderr=subprocess.PIPE, timeout=30)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def start_background(mission, runner):
     jid = uuid.uuid4().hex[:8]
     with _JOB_LOCK:
@@ -103,12 +127,13 @@ def start_background(mission, runner):
             status = "failed"
             text = f"failed: {e}"[:260]
         with _JOB_LOCK:
-            JOBS[jid].update(status="done", result=text.strip(), finished=time.time())
+            JOBS[jid].update(status=status, result=text.strip(), finished=time.time())
         def finish(d2):
             for item in d2.get("missions", []):
                 if item.get("id") == jid:
                     item.update(status=status, finished=time.time(), result=text.strip()[:500])
         update_state(finish)
+        _notify(status, jid, mission, text.strip())
 
     threading.Thread(target=_work, daemon=True).start()
     return jid
